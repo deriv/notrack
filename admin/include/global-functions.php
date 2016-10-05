@@ -142,20 +142,20 @@ function Filter_Int_Value($Val, $Min, $Max, $DefaultValue=0) {
 //Filter String from GET---------------------------------------------
 function Filter_Str($Str) {
   //1. Check Variable Exists
-  //2. Check String doesn't contain !"£$%^&*()[]+=<>,|/\
+  //2. Check String doesn't contain !"£$%^*()[]<>|/\
   //Return True on success, and False on fail
 
   if (isset($_GET[$Str])) {
-    if (preg_match('/[!\"£\$%\^&\*\(\)\[\]+=<>:\,\|\/\\\\]/', $_GET[$Str]) == 0) return true;    
+    if (preg_match('/[!\"£\$%\^\*\(\)\[\]<>\|\/\\\\]/', $_GET[$Str]) == 0) return true;    
   }
   return false;
 }
 //Filter String Value------------------------------------------------
 function Filter_Str_Value($Str, $DefaltValue='') {
-  //1. Check String Length is > 0 AND String doesn't contain !"£$%^&()+=<>,|/\
+  //1. Check String Length is > 0 AND String doesn't contain !"<>,|/\
   //2. Return Str on success, and Default on fail
   
-  if (preg_match('/[!\"£\$%\^&\(\)+=<>:\,\|\/\\\\]/', $Str) == 0) {
+  if (preg_match('/[!\"<>\|]/', $Str) == 0) {
     return $Str;
   }  
   return $DefaltValue;
@@ -168,7 +168,7 @@ function Filter_URL($Str) {
   //Return True on success, and False on fail
   
   if (isset($_GET[$Str])) {
-    if (((strlen($_GET[$Str]) > 0) && (preg_match('/[!\"£\$%\^&\(\)+=<>:\,\|\/\\\\]/', $_GET[$Str]) == 0))) {
+    if (((strlen($_GET[$Str]) > 0) && (preg_match('/[!\"£\$%\^&\(\)+=<>\,\|\/\\\\]/', $_GET[$Str]) == 0))) {
       if (preg_match('/.*\..{2,}/', $_GET[$Str]) == 1) return true;
     }
   }
@@ -176,13 +176,12 @@ function Filter_URL($Str) {
 }
 //Filter URL Str-----------------------------------------------------
 function Filter_URL_Str($Str) {
-  //1. Check String Length is > 0 AND String doesn't contain !"£$%^&()+=<>,|/\
+  //1. Check String Length is > 0 AND String doesn't contain !"£$^()<>,|
   //2. Check String matches the form of a URL "any.co"
   //Return True on success, and False on fail
-  
-  if (((strlen($Str) > 0) && (preg_match('/[!\"£\$%\^&\(\)+=<>:\,\|\/\\\\]/', $Str) == 0))) {
-    if (preg_match('/.*\..{2,}/', $Str) == 1) return true;    
-  }  
+  if (preg_match('/[!\"£\$\^\(\)<>\,\|]/', $Str) == 0) {
+    if (preg_match('/.*\..{2,}$/', $Str) == 1) return true;    
+  }
   return false;
 }
 //Load Config File---------------------------------------------------
@@ -194,18 +193,19 @@ function LoadConfigFile() {
   //5. Filter each value
   //6. Setup SearchUrl
   //7. Write Config to Memcache
+  //As of v0.7.16 blocklists were renamed to bl_
 
   global $FileConfig, $Config, $DefaultConfig, $Mem, $Version;
   
   $Config=$Mem->get('Config');                   //Load array from Memcache
   
-  if ($Config) return;                           //Did it load from memory?
+  if (! empty($Config)) return;                  //Did it load from memory?
   
-  $Config = $DefaultConfig;                    //Firstly Set Default Config
-  if (file_exists($FileConfig)) {              //Check file exists      
+  $Config = $DefaultConfig;                      //Firstly Set Default Config
+  if (file_exists($FileConfig)) {                //Check file exists      
     $FileHandle= fopen($FileConfig, 'r');
     while (!feof($FileHandle)) {
-      $Line = trim(fgets($FileHandle));        //Read Line of LogFile
+      $Line = trim(fgets($FileHandle));          //Read Line of LogFile
       if ($Line != '') {
         $SplitLine = explode('=', $Line);
         if (count($SplitLine == 2)) {          
@@ -215,10 +215,10 @@ function LoadConfigFile() {
               $Config['LatestVersion'] = Filter_Str_Value($SplitLine[1], $Version);
               break;
             case 'NetDev':
-              $Config['NetDev'] = Filter_Str_Value($SplitLine[1], 'eth0');
+              $Config['NetDev'] = $SplitLine[1];
               break;
             case 'IPVersion':
-              $Config['IPVersion'] = Filter_Str_Value($SplitLine[1], 'IPv4');
+              $Config['IPVersion'] = $SplitLine[1];
               break;
             case 'Status':
               $Config['Status'] = Filter_Str_Value($SplitLine[1], 'Enabled');
@@ -227,93 +227,134 @@ function LoadConfigFile() {
               $Config['BlockMessage'] = Filter_Str_Value($SplitLine[1], 'pixel');
               break;
             case 'Search':
-              $Config['Search'] = Filter_Str_Value($SplitLine[1], 'Google');
-              break;
-            case 'SearchUrl':
-              $Config['SearchUrl'] = Filter_Str_Value($SplitLine[1], '');
+              $Config['Search'] = Filter_Str_Value($SplitLine[1], 'DuckDuckGo');
               break;
             case 'WhoIs':
-              $Config['WhoIs'] = Filter_Str_Value($SplitLine[1], 'who.is');
-              break;
-            case 'WhoIsUrl':
-              $Config['WhoIsUrl'] = Filter_Str_Value($SplitLine[1], 'who.is');
+              $Config['WhoIs'] = Filter_Str_Value($SplitLine[1], 'Who.is');              
               break;
             case 'Username':
-              $Config['Username'] = Filter_Str_Value($SplitLine[1], '');
+              $Config['Username'] = $SplitLine[1];
               break;
             case 'Password':
-              $Config['Password'] = Filter_Str_Value($SplitLine[1], '');
+              $Config['Password'] = $SplitLine[1];
               break;
             case 'Delay':
               $Config['Delay'] = Filter_Int_Value($SplitLine[1], 0, 3600, 30);
               break;
+            case 'Suppress':
+              $Config['Suppress'] = Filter_Str_Value($SplitLine[1], '');
+              break;
+            case 'BL_Custom': 
+            case 'bl_custom':
+              $Config['bl_custom'] = Filter_Str_Value($SplitLine[1], '');
+              break;
             case 'BlockList_NoTrack':
-              $Config['BlockList_NoTrack'] = Filter_Int_Value($SplitLine[1], 0, 1, 1);
+            case 'bl_notrack':
+              $Config['bl_notrack'] = Filter_Int_Value($SplitLine[1], 0, 1, 1);
               break;
             case 'BlockList_TLD':
-              $Config['BlockList_TLD'] = Filter_Int_Value($SplitLine[1], 0, 1, 1);
+            case 'bl_tld':
+              $Config['bl_tld'] = Filter_Int_Value($SplitLine[1], 0, 1, 1);
               break;
             case 'BlockList_QMalware':
-              $Config['BlockList_QMalware'] = Filter_Int_Value($SplitLine[1], 0, 1, 1);
+            case 'bl_qmalware':
+              $Config['bl_qmalware'] = Filter_Int_Value($SplitLine[1], 0, 1, 1);
               break;
-            case 'BlockList_AdBlockManager':
-              $Config['BlockList_AdBlockManager'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
-              break;
+            case 'BlockList_Hexxium':
+            case 'bl_hexxium':
+              $Config['bl_hexxium'] = Filter_Int_Value($SplitLine[1], 0, 1, 1);
+              break;            
             case 'BlockList_DisconnectMalvertising':
-              $Config['BlockList_DisconnectMalvertising'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_disconnectmalvertising':
+              $Config['bl_disconnectmalvertising'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
             case 'BlockList_EasyList':
-              $Config['BlockList_EasyList'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_easylist':
+              $Config['bl_easylist'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
             case 'BlockList_EasyPrivacy':
-              $Config['BlockList_EasyPrivacy'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_easyprivacy':
+              $Config['bl_easyprivacy'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
             case 'BlockList_FBAnnoyance':
-              $Config['BlockList_FBAnnoyance'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_fbannoyance':
+              $Config['bl_fbannoyance'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
             case 'BlockList_FBEnhanced':
-              $Config['BlockList_FBEnhanced'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_fbenhanced':
+              $Config['bl_fbenhanced'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
             case 'BlockList_FBSocial':
-              $Config['BlockList_FBSocial'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_fbsocial':
+              $Config['bl_fbsocial'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
             case 'BlockList_hpHosts':
-              $Config['BlockList_hpHosts'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_hphosts':
+              $Config['bl_hphosts'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
             case 'BlockList_MalwareDomainList':
-              $Config['BlockList_MalwareDomainList'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_malwaredomainlist':
+              $Config['bl_malwaredomainlist'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
             case 'BlockList_MalwareDomains':
-              $Config['BlockList_MalwareDomains'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_malwaredomains':
+              $Config['bl_malwaredomains'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
             case 'BlockList_PglYoyo':
-              $Config['BlockList_PglYoyo'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
-              break;
+            case 'bl_pglyoyo':
+              $Config['bl_pglyoyo'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+              break;            
             case 'BlockList_SomeoneWhoCares':
-              $Config['BlockList_SomeoneWhoCares'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_someonewhocares':
+              $Config['bl_someonewhocares'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
             case 'BlockList_Spam404':
-              $Config['BlockList_Spam404'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_spam404':
+              $Config['bl_spam404'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+              break;
+            case 'BlockList_SwissRansom':
+            case 'bl_swissransom':
+              $Config['bl_swissransom'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+              break;
+            case 'BlockList_SwissZeus':
+            case 'bl_swisszeus':
+              $Config['bl_swisszeus'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
             case 'BlockList_Winhelp2002':
-              $Config['BlockList_Winhelp2002'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_winhelp2002':
+              $Config['bl_winhelp2002'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
-            /*case 'BlockList_':
-              $Config['BlockList_'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            /*case 'bl_':
+              $Config['bl_'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;*/
             //Region Specific
+            case 'bl_areasy':
+              $Config['bl_areasy'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+              break;
             case 'BlockList_CHNEasy':
-              $Config['BlockList_CHNEasy'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_chneasy':
+              $Config['bl_chneasy'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+              break;
+            case 'bl_deueasy':
+              $Config['bl_deueasy'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+              break;
+            case 'bl_dnkeasy':
+              $Config['bl_dnkeasy'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
             case 'BlockList_RUSEasy':
-              $Config['BlockList_RUSEasy'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+            case 'bl_ruseasy':
+              $Config['bl_ruseasy'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
+              break;            
+            case 'bl_fblatin':
+              $Config['bl_fblatin'] = Filter_Int_Value($SplitLine[1], 0, 1, 0);
               break;
           }
         }
       }
     }
-       
-    if ($Config['SearchUrl'] == '') {     
+    
+    //Set SearchUrl if User hasn't configured a custom string via notrack.conf
+    if ($Config['SearchUrl'] == '') {      
       switch($Config['Search']) {
         case 'Baidu':
           $Config['SearchUrl'] = 'https://www.baidu.com/s?wd=';
@@ -334,13 +375,13 @@ function LoadConfigFile() {
           $Config['SearchUrl'] = 'https://www.google.com/search?q=';
           break;
         case 'Ixquick':
-          $Config['SearchUrl'] = 'https://ixquick.eu/do/search?q=%s';
+          $Config['SearchUrl'] = 'https://ixquick.eu/do/search?q=';
           break;
         case 'Qwant':
           $Config['SearchUrl'] = 'https://www.qwant.com/?q=';
           break;
         case 'StartPage':
-          $Config['SearchUrl'] = 'https://startpage.com/do/search?q=%s';
+          $Config['SearchUrl'] = 'https://startpage.com/do/search?q=';
           break;
         case 'Yahoo':
           $Config['SearchUrl'] = 'https://search.yahoo.com/search?p=';
@@ -349,10 +390,29 @@ function LoadConfigFile() {
           $Config['SearchUrl'] = 'https://www.yandex.com/search/?text=';
           break;
         default:
-          $Config['SearchUrl'] = 'https://www.google.com/search?q=';          
+          $Config['SearchUrl'] = 'https://duckduckgo.com/?q=';          
       }
     }
-    $Mem->set('Config', $Config, 0, 1200); 
+    
+    //Set WhoIsUrl if User hasn't configured a custom string via notrack.conf
+    if ($Config['WhoIsUrl'] == '') {      
+      switch($Config['WhoIs']) {
+        case 'DomainTools':
+          $Config['WhoIsUrl'] = 'http://whois.domaintools.com/';
+          break;
+        case 'Icann':
+          $Config['WhoIsUrl'] = 'https://whois.icann.org/lookup?name=';
+          break;          
+        case 'Who.is':
+          $Config['WhoIsUrl'] = 'https://who.is/whois/';
+          break;
+        default:
+          $Config['WhoIsUrl'] = 'https://who.is/whois/';
+      }
+    }
+    
+    fclose($FileHandle);
+    $Mem->set('Config', $Config, 0, 1200);
   }
   
   return null;

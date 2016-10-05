@@ -1,6 +1,48 @@
 <?php
+/********************************************************************
+Config.php is split out into 8 sub pages:
+ 1. General
+ 2. Block Lists
+ 3. Black List
+ 4. White List
+ 5. Domain List
+ 6. Sites Blocked
+ 7. Advanced
+ 8. Status Check
+
+Domain List
+  Reading:
+    1. Load tld.csv
+      tld.csv is updated with NoTrack upgrade. tld.csv contains risk level of each domain.
+    2. Load users Domain White List
+    3. Load users Domain Black List
+    4. Display Domain List
+      High risk domains are ticked, unless they're added to the white list
+      Medium & Low risk domains are unticked, unless they're added to the black list
+    5. Domain List contains a form with POST request. When submitted all ticked boxes (named after each domain) are sent with hidden value action=tld
+  
+  Updating:
+    1. Load tld.csv
+    2. Write White list, based on any unticked (not present in POST) high risk domains.
+    3. Write Black list, based on all ticked (present in POST) domains.
+    4. ExecAction to copy Black and White lists into /etc/notrack
+    5. sleep for 1 second to prevent race condition
+    6. Return to Reading
+    
+Advanced
+  Reading:
+    1. Display options
+    (Future option - Use JS to validate list as its being typed)
+  
+  Updating:
+    1. Validate list of suppressed sites
+    2. Write to file
+
+********************************************************************/
+
 require('./include/global-vars.php');
 require('./include/global-functions.php');
+require('./include/menu.php');
 
 LoadConfigFile();
 if ($Config['Password'] != '') {
@@ -11,7 +53,10 @@ if ($Config['Password'] != '') {
   }
 }
 
+//-------------------------------------------------------------------
 $List = array();               //Global array for all the Block Lists
+
+//List of Selectable Search engines, corresponds with Global-Functions.php -> LoadConfigFile()
 $SearchEngineList = array(
  'Baidu',
  'Bing',
@@ -19,20 +64,38 @@ $SearchEngineList = array(
  'Exalead',
  'Gigablast',
  'Google',
+ 'Ixquick',
  'Qwant',
+ 'StartPage',
  'Yahoo',
- 'Yandex',
+ 'Yandex'
 );
 
-//Deal with POST actions first, that way we can roload the page
-//and remove POST requests from browser history.
+//List of Selectable Who Is sites, corresponds with Global-Functions.php -> LoadConfigFile()
+$WhoIsList = array(
+ 'DomainTools',
+ 'Icann',
+ 'Who.is'
+);
+
+//-------------------------------------------------------------------
+//Deal with POST actions first, that way we can reload the page and remove POST requests from browser history.
 if (isset($_POST['action'])) {
   switch($_POST['action']) {
+    case 'advanced':
+      if (UpdateAdvancedConfig()) {              //Are users settings valid?
+        WriteTmpConfig();                        //If ok, then write the Config file
+        ExecAction('update-config', true, true);
+        sleep(1);                                //Short pause to prevent race condition
+      }      
+      header('Location: ?v=advanced');           //Reload page
+      break;
     case 'blocklists':
       UpdateBlockListConfig();
       WriteTmpConfig();
       ExecAction('update-config', false);
       ExecAction('run-notrack', true, true);
+      //ExecAction('update-config', true, true);
       $Mem->delete('SiteList');                  //Delete Site Blocked from Memcache
       sleep(1);                                  //Short pause to prevent race condition
       header('Location: ?v=blocks');             //Reload page
@@ -52,17 +115,28 @@ if (isset($_POST['action'])) {
       }
       break;
     case 'stats':
-      if (UpdateStatsConfig()) {        
+      if (UpdateStatsConfig()) {
         WriteTmpConfig();
-        ExecAction('update-config', true, true); 
-        sleep(1);                                  //Short pause to prevent race condition
+        ExecAction('update-config', true, true);
+        sleep(1);                                //Short pause to prevent race condition
         header('Location: ?');
       }
-    default:
-      echo 'Unknown POST action';
-      die();
+      break;
+    case 'tld':
+      Load_CSV($CSVTld, 'CSVTld');               //Load tld.csv
+      UpdateDomainList();
+      ExecAction('copy-tldblacklist', false);
+      ExecAction('copy-tldwhitelist', true, true);
+      $Mem->delete('TLDBlackList');              //Delete Black List from Memcache
+      $Mem->delete('TLDWhiteList');              //Delete White List from Memcache
+      sleep(1);                                  //Prevent race condition
+      header('Location: ?v=tld');                //Reload page
+      break;
+    default:      
+      die('Unknown POST action');
   }
 }
+//-------------------------------------------------------------------
 ?>
 <!DOCTYPE html>
 <html>
@@ -71,23 +145,17 @@ if (isset($_POST['action'])) {
   <link href="./css/master.css" rel="stylesheet" type="text/css" />
   <link rel="icon" type="image/png" href="./favicon.png" />
   <script src="./include/config.js"></script>
+  <script src="./include/menu.js"></script>
   <title>NoTrack - Config</title>  
 </head>
 
 <body>
-<div id="main">
-<nav><div id="main-menu">
-  <a href="../admin"><span class="pictext"><img src="./svg/menu_home.svg" alt=""></span></a>
-  <a href="../admin/config.php"><span class="pictext"><img src="./svg/menu_config.svg" alt=""><span class="dtext">General</span></span></a>
-  <a href="../admin/config.php?v=blocks"><span class="pictext"><img src="./svg/menu_blocklists.svg" alt=""><span class="dtext">Block Lists</span></span></a>
-  <a href="../admin/config.php?v=black"><span class="pictext"><img src="./svg/menu_black.svg" alt=""><span class="dtext">Black List</span></span></a>
-  <a href="../admin/config.php?v=white"><span class="pictext"><img src="./svg/menu_white.svg" alt=""><span class="dtext">White List</span></span></a>
-  <a href="../admin/config.php?v=tldblack"><span class="pictext"><img src="./svg/menu_tldblack.svg" alt=""><span class="dtext">TLD Black </span></span></a>
-  <a href="../admin/config.php?v=tldwhite"><span class="pictext"><img src="./svg/menu_tldwhite.svg" alt=""><span class="dtext">TLD White </span></span></a>
-  <a href="../admin/config.php?v=sites"><span class="pictext"><img src="./svg/menu_sites.svg" alt=""><span class="dtext">Sites Blocked</span></span></a>
-</div></nav>
-
 <?php
+ActionTopMenu();
+draw_topmenu();
+draw_configmenu();
+echo '<div id="main">';
+
 //Add GET Var to Link if Variable is used----------------------------
 function AddGetVar($Var) {
   global $RowsPerPage, $SearchStr, $StartPoint;
@@ -138,10 +206,14 @@ function WriteLI($Character, $Start, $Active, $View) {
   return null;
 }
 //Draw BlockList Row-------------------------------------------------
-function DrawBlockListRow($BL, $ConfBL, $Item, $Msg) {
-  global $Config, $DirEtc, $DirTmp;
+function DrawBlockListRow($BL, $Item, $Msg) {
+  global $Config, $DirEtc, $DirTmp, $CSVTld;
+  //Txt File = Origniating download file
+  //Csv File = Processed file
+  //TLD Is a special case, and the Txt file used is $CSVTld
   
-  if ($Config[$ConfBL] == 0) {
+  
+  if ($Config[$BL] == 0) {
     echo '<tr><td>'.$Item.':</td><td><input type="checkbox" name="'.$BL.'"> '.$Msg.'</td></tr>'.PHP_EOL;
   }
   else {
@@ -152,22 +224,27 @@ function DrawBlockListRow($BL, $ConfBL, $Item, $Msg) {
     $FileName = '';
     $TotalStr = '';  
     
-    $FileName = strtolower(substr($ConfBL, 10));
-    $CsvFile = file_exists($DirEtc.$FileName.'.csv');
-    $TxtFile = file_exists($DirTmp.$FileName.'.txt');
+    $FileName = strtolower(substr($BL, 3));
+    if ($BL == 'bl_tld') $TxtFileName = $CSVTld;
+    else $TxtFileName = $DirTmp.$FileName.'.txt';
+    
+    $CSVFileName = $DirEtc.$FileName.'.csv';    
+    
+    $CsvFile = file_exists($CSVFileName);
+    $TxtFile = file_exists($TxtFileName);
     
     if ($CsvFile && $TxtFile) {
-      $CsvLines = intval(exec('wc -l '.$DirEtc.$FileName.'.csv'));
-      $TxtLines = intval(exec('wc -l '.$DirTmp.$FileName.'.txt'));
-      if ($CsvLines > $TxtLines) $CsvLines = $TxtLines ;
+      $CsvLines = intval(exec('wc -l '.$CSVFileName));
+      $TxtLines = intval(exec('wc -l '.$TxtFileName));
+      if ($CsvLines > $TxtLines) $CsvLines = $TxtLines; //Prevent stupid result
       $TotalStr = '<p class="light">'.$CsvLines.' used of '.$TxtLines.'</p>';
     }
     elseif ($CsvFile) {
-      $CsvLines = intval(exec('wc -l '.$DirEtc.$FileName.'.csv'));
+      $CsvLines = intval(exec('wc -l '.$CSVFileName));
       $TotalStr = '<p class="light">'.$CsvLines.' used of ?</p>';
     }
     elseif ($TxtFile) {
-      $TxtLines = intval(exec('wc -l '.$DirTmp.$FileName.'.txt'));
+      $TxtLines = intval(exec('wc -l '.$TxtFileName));
       $TotalStr = '<p class="light">? used of '.$TxtLines.'</p>';
     }
    
@@ -195,7 +272,7 @@ function LoadCustomList($ListName, $FileName) {
   
   $List = $Mem->get($ListName);
   
-  if (! $List) {
+  if (empty($List)) {
     $FileHandle = fopen($FileName, 'r') or die('Error unable to open '.$FileName);
     while (!feof($FileHandle)) {
       $Line = trim(fgets($FileHandle));
@@ -217,44 +294,55 @@ function LoadCustomList($ListName, $FileName) {
   return true;  
 }  
 //-------------------------------------------------------------------
-function LoadSiteList() {
-//This function is susceptible to race condition:
-//If the User changes the BlockLists and switches to this view while NoTrack is processing $FileBlockingCSV is incomplete.
-//To combat this race condition Lists below 100 lines aren't stored in Memcache.
-//Large lists are held in Memcache for 4 minutes
-
-  global $FileBlockingCSV, $List, $Mem;
-  
-  ///////////////////////////////////////////////////////////////////
-  //Temporary warning to cover NoTrack pre 0.7 where blocklist was in a list file
-  //Remove at Beta
-  if (file_exists('/etc/notrack/tracker-quick.list')) {
-    echo '<h4>Warning: Legacy version of NoTrack created the blocklist</h4><br />'.PHP_EOL;
-    echo '<h4>Please wait a few minutes while list is regenerated</h4><br />';
-    echo '<p>If this warning persists re-run: notrack --upgrade</p>';
-    ExecAction('run-notrack', false);
-    echo '<pre>Updating Custom blocklists in background</pre>'.PHP_EOL;      
-    exec("sudo ntrk-exec > /dev/null &");      //Fork NoTrack process
-    die();
-    return null;
-  }
-  ///////////////////////////////////////////////////////////////////
-  
-  $List = $Mem->get('SiteList');
-  
-  if (! $List) {
-    //$List[] = array('Null', 'Active', 'Null');  //Bump start point to 1
-    $FileHandle = fopen($FileBlockingCSV, 'r') or die('Error unable to open '.$FileBlockingCSV);
+function Load_CSV($FileName, $ListName) {
+  global $List, $Mem;
+    
+  //$List = $Mem->get($ListName);
+  if (empty($List)) {
+    $FileHandle = fopen($FileName, 'r') or die('Error unable to open '.$FileName);
     while (!feof($FileHandle)) {
       $List[] = fgetcsv($FileHandle);
     }
     
     fclose($FileHandle);
-    if (count($List) > 100) {  //Only store decent size list in Memcache
-      $Mem->set('SiteList', $List, 0, 240);      //4 Minutes
+    if (count($List) > 50) {                     //Only store decent size list in Memcache
+      $Mem->set($ListName, $List, 0, 600);       //10 Minutes
     }
   }
-  return null;
+  
+  return true;
+}
+//-------------------------------------------------------------------
+function Load_List($FileName, $ListName) {
+  global $Mem;
+  
+  $FileArray = array();
+  
+  $FileArray = $Mem->get($ListName);
+  if (empty($FileArray)) {
+    if (file_exists($FileName)) {                //Check if File Exists
+      $FileHandle = fopen($FileName, 'r') or die('Error unable to open '.$FileName);
+      while (!feof($FileHandle)) {
+        $FileArray[] = trim(fgets($FileHandle));
+      }
+      fclose($FileHandle);
+      $Mem->set($ListName, $FileArray, 0, 600);  //Change to 1800
+    }
+  }
+  //else echo 'cache';
+  return $FileArray;
+}
+//-------------------------------------------------------------------
+function DisplayAdvanced() {
+  global $Config;
+  echo '<form action="?v=advanced" method="post">'.PHP_EOL;
+  echo '<input type="hidden" name="action" value="advanced">';
+  DrawSysTable('Advanced Settings');
+  DrawSysRow('Suppress Domains <img class="btn" src="./svg/button_help.svg" alt="help" title="Group together certain domains on the Stats page">', '<textarea rows="5" name="suppress">'.str_replace(',', PHP_EOL, $Config['Suppress']).'</textarea>');
+  echo '<tr><td colspan="2"><div class="centered"><input type="submit" value="Save Changes"></div></td></tr>'.PHP_EOL;
+  echo '</table>'.PHP_EOL;
+  echo '</div></div>'.PHP_EOL;
+  echo '</form>'.PHP_EOL;
 }
 //-------------------------------------------------------------------
 function DisplayBlockLists() {
@@ -262,49 +350,57 @@ function DisplayBlockLists() {
 
   echo '<form action="?v=blocks" method="post">';         //Block Lists
   echo '<input type="hidden" name="action" value="blocklists">';
-  DrawSysTable('Block Lists');  
+  DrawSysTable('NoTrack Block Lists');
+  DrawBlockListRow('bl_notrack', 'NoTrack', 'Default List, containing mixture of Trackers and Ad sites'); 
+  DrawBlockListRow('bl_tld', 'Top Level Domain', 'Whole country and generic domains');
+  DrawBlockListRow('bl_qmalware', 'Malware Sites', 'Malicious sites');
+  echo '</table></div></div>'.PHP_EOL;
   
-  DrawBlockListRow('bl_notrack', 'BlockList_NoTrack', 'NoTrack', 'Default List, containing mixture of Trackers and Ad sites.'); 
+  DrawSysTable('Advert Blocking');
+  DrawBlockListRow('bl_easylist', 'EasyList', 'EasyList without element hiding rules‎ <a href="https://forums.lanik.us/" target="_blank">(forums.lanik.us)</a>');
+  DrawBlockListRow('bl_pglyoyo', 'Peter Lowe&rsquo;s Ad server list‎', 'Some of this list is already in NoTrack <a href="https://pgl.yoyo.org/adservers/" target="_blank">(pgl.yoyo.org)</a>'); 
+  echo '</table></div></div>'.PHP_EOL;
   
-  DrawBlockListRow('bl_tld', 'BlockList_TLD', 'Top Level Domain', 'Whole country and generic domains.');
+  DrawSysTable('Privacy');
+  DrawBlockListRow('bl_easyprivacy', 'EasyPrivacy', 'Supplementary list from AdBlock Plus <a href="https://forums.lanik.us/" target="_blank">(forums.lanik.us)</a>');
+  DrawBlockListRow('bl_fbenhanced', 'Fanboy&rsquo;s Enhanced Tracking List', 'Blocks common tracking scripts <a href="https://www.fanboy.co.nz/" target="_blank">(fanboy.co.nz)</a>');
+  echo '</table></div></div>'.PHP_EOL;
   
-  DrawBlockListRow('bl_qmalware', 'BlockList_QMalware', 'Malware Sites', 'New list which seperates Malware sites from Tracker sites.');
+  DrawSysTable('Malware');
+  DrawBlockListRow('bl_hexxium', 'Hexxium Creations Malware List', 'Hexxium Creations are a small independent team running a community based malware database <a href="https://hexxiumcreations.com/domain-ip-threat-database/" target="_blank">(hexxiumcreations.com)</a>');
+  DrawBlockListRow('bl_disconnectmalvertising', 'Malvertising list by Disconnect', '<a href="https://disconnect.me/" target="_blank">(disconnect.me)</a>');
+  DrawBlockListRow('bl_malwaredomainlist', 'Malware Domain List', '<a href="http://www.malwaredomainlist.com/" target="_blank">(malwaredomainlist.com)</a>');
+  DrawBlockListRow('bl_malwaredomains', 'Malware Domains', 'A good list to add <a href="http://www.malwaredomains.com/" target="_blank">(malwaredomains.com)</a>');
+  DrawBlockListRow('bl_spam404', 'Spam404', '<a href="http://www.spam404.com/">(www.spam404.com)</a>');
+  DrawBlockListRow('bl_swissransom', 'Swiss Security - Ransomware Tracker', 'Protects against downloads of several variants of Ransomware, including Cryptowall and TeslaCrypt <a href="https://ransomwaretracker.abuse.ch/" target="_blank">(abuse.ch)</a>');
+  DrawBlockListRow('bl_swisszeus', 'Swiss Security - ZeuS Tracker', 'Protects systems infected with ZeuS malware from accessing Command & Control servers <a href="https://zeustracker.abuse.ch/" target="_blank">(abuse.ch)</a>');
+  echo '</table></div></div>'.PHP_EOL;
   
-  echo '<tr><th colspan="2">Ad Block</th></tr>';
-  DrawBlockListRow('bl_easylist', 'BlockList_EasyList', 'EasyList', 'EasyList without element hiding rules‎ <a href="https://forums.lanik.us/">(forums.lanik.us)</a>');
+  DrawSysTable('Social');
+  DrawBlockListRow('bl_fbannoyance', 'Fanboy&rsquo;s Annoyance List', 'Block Pop-Ups and other annoyances. <a href="https://www.fanboy.co.nz/" target="_blank">(fanboy.co.nz)</a>');
+  DrawBlockListRow('bl_fbsocial', 'Fanboy&rsquo;s Social Blocking List', 'Block social content, widgets, scripts and icons. <a href="https://www.fanboy.co.nz" target="_blank">(fanboy.co.nz)</a>');
+  echo '</table></div></div>'.PHP_EOL;
   
-  DrawBlockListRow('bl_pglyoyo', 'BlockList_PglYoyo', 'Peter Lowe&rsquo;s Ad server list‎', 'Some of this list is already in NoTrack <a href="https://pgl.yoyo.org/adservers/">(pgl.yoyo.org)</a>'); 
+  DrawSysTable('Multipurpose');
+  DrawBlockListRow('bl_someonewhocares', 'Dan Pollock&rsquo;s hosts file', 'Mixture of Shock and Ad sites. <a href="http://someonewhocares.org/hosts" target="_blank">(someonewhocares.org)</a>');
+  DrawBlockListRow('bl_hphosts', 'hpHosts', 'Inefficient list <a href="http://hosts-file.net" target="_blank">(hosts-file.net)</a>');
+  //DrawBlockListRow('bl_securemecca', 'Secure Mecca', 'Mixture of Adult, Gambling and Advertising sites <a href="http://securemecca.com/" target="_blank">(securemecca.com)</a>');
+  DrawBlockListRow('bl_winhelp2002', 'MVPS Hosts‎', 'Very inefficient list <a href="http://winhelp2002.mvps.org/" target="_blank">(winhelp2002.mvps.org)</a>');
+  echo '</table></div></div>'.PHP_EOL;
   
-  DrawBlockListRow('bl_adblockmanager', 'BlockList_AdBlockManager', 'AdBlock Manager', 'Mostly Mobile Ad sites. Over 90% of this list is in NoTrack');
+  DrawSysTable('Region Specific');
+  DrawBlockListRow('bl_areasy', 'AR EasyList', 'EasyList Arab (عربي)‎ <a href="https://forums.lanik.us/viewforum.php?f=98" target="_blank">(forums.lanik.us)</a>');
+  DrawBlockListRow('bl_chneasy', 'CHN EasyList', 'EasyList China (中文)‎ <a href="http://abpchina.org/forum/forum.php" target="_blank">(abpchina.org)</a>');
   
-  echo '<tr><th colspan="2">Privacy</th></tr>';
-  DrawBlockListRow('bl_easyprivacy', 'BlockList_EasyPrivacy', 'EasyPrivacy', 'Supplementary list from AdBlock Plus <a href="https://forums.lanik.us/">(forums.lanik.us)</a>');
+  DrawBlockListRow('bl_deueasy', 'DEU EasyList', 'EasyList Germany (Deutsch) <a href="https://forums.lanik.us/viewforum.php?f=90" target="_blank">(forums.lanik.us)</a>');
+  DrawBlockListRow('bl_dnkeasy', 'DNK EasyList', 'Schacks Adblock Plus liste‎ (Danmark) <a href="https://henrik.schack.dk/adblock/" target="_blank">(henrik.schack.dk)</a>');  
+  DrawBlockListRow('bl_fblatin', 'Latin EasyList', 'Spanish/Portuguese Adblock List <a href="https://www.fanboy.co.nz/regional.html" target="_blank">(fanboy.co.nz)</a>');
   
-  DrawBlockListRow('bl_fbenhanced', 'BlockList_FBEnhanced', 'Fanboy&rsquo;s Enhanced Tracking List', 'Blocks common tracking scripts <a href="https://www.fanboy.co.nz/">(fanboy.co.nz)</a>');
-    
-  echo '<tr><th colspan="2">Malware</th></tr>';
-  DrawBlockListRow('bl_dismalvertising', 'BlockList_DisconnectMalvertising', 'Malvertising list by Disconnect', '<a href="https://disconnect.me/">(disconnect.me)</a>');
-  DrawBlockListRow('bl_maldomainlist', 'BlockList_MalwareDomainList', 'Malware Domain List', '<a href="http://www.malwaredomainlist.com/">(malwaredomainlist.com)</a>');
-  DrawBlockListRow('bl_malwaredomains', 'BlockList_MalwareDomains', 'Malware Domains', 'A good list to add <a href="http://www.malwaredomains.com/">(malwaredomains.com)</a>');
+  DrawBlockListRow('bl_ruseasy', 'RUS EasyList', 'Russia RuAdList+EasyList (Россия Фильтр) <a href="https://forums.lanik.us/viewforum.php?f=102" target="_blank">(forums.lanik.us)</a>');
+  echo '</table></div></div>'.PHP_EOL;
   
-  DrawBlockListRow('bl_spam404', 'BlockList_Spam404', 'Spam404', '<a href="http://www.spam404.com/">(www.spam404.com)</a>');
-  
-  echo '<tr><th colspan="2">Social</th></tr>';
-  DrawBlockListRow('bl_fbannoyance', 'BlockList_FBAnnoyance', 'Fanboy&rsquo;s Annoyance List', 'Block Pop-Ups and other annoyances. <a href="https://www.fanboy.co.nz/">(fanboy.co.nz)</a>');
-  
-  DrawBlockListRow('bl_fbsocial', 'BlockList_FBSocial', 'Fanboy&rsquo;s Social Blocking List', 'Block social content, widgets, scripts and icons. <a href="https://www.fanboy.co.nz">(fanboy.co.nz)</a>');
-  
-  echo '<tr><th colspan="2">Multipurpose</th></tr>';
-  DrawBlockListRow('bl_someonewhocares', 'BlockList_SomeoneWhoCares', 'Dan Pollock&rsquo;s hosts file', 'Mixture of Shock and Ad sites. <a href="http://someonewhocares.org/hosts">(someonewhocares.org)</a>');
-  
-  DrawBlockListRow('bl_hphosts', 'BlockList_hpHosts', 'hpHosts', 'Inefficient list <a href="http://hosts-file.net">(hosts-file.net)</a>');
-                                             
-  DrawBlockListRow('bl_winhelp2002', 'BlockList_Winhelp2002', 'MVPS Hosts‎', 'Very inefficient list <a href="http://winhelp2002.mvps.org/">(winhelp2002.mvps.org)</a>');
-  
-  echo '<tr><th colspan="2">Region Specific</th></tr>';
-  DrawBlockListRow('bl_chneasy', 'BlockList_CHNEasy', 'CHN EasyList', 'EasyList China (中文)‎ <a href="http://abpchina.org/forum/forum.php">(abpchina.org)</a>');
-  
-  DrawBlockListRow('bl_ruseasy', 'BlockList_RUSEasy', 'RUS EasyList', 'Russia RuAdList+EasyList (Россия Фильтр) <a href="https://forums.lanik.us/viewforum.php?f=102">(forums.lanik.us)</a>');
+  DrawSysTable('Custom Block Lists');
+  DrawSysRow('Custom', 'Use either Downloadable or Localy stored Block Lists<br /><textarea rows="5" name="bl_custom">'.str_replace(',', PHP_EOL,$Config['bl_custom']).'</textarea>');
   
   echo '</table><br />'.PHP_EOL;
   
@@ -315,7 +411,7 @@ function DisplayBlockLists() {
 }
 //-------------------------------------------------------------------
 function DisplayConfigChoices() {
-  global $Config, $DirOldLogs, $Version, $SearchEngineList;
+  global $Config, $DirOldLogs, $Version, $SearchEngineList, $WhoIsList;
   
   $Load = sys_getloadavg();
   $FreeMem = preg_split('/\s+/', exec('free -m | grep Mem'));
@@ -324,17 +420,28 @@ function DisplayConfigChoices() {
 
   $PS_Lighttpd = preg_split('/\s+/', exec('ps -eo fname,pid,stime,pmem | grep lighttpd'));
 
+  $Uptime = explode(',', exec('uptime'))[0];
+  if (preg_match('/\d\d\:\d\d\:\d\d\040up\040/', $Uptime) > 0) $Uptime = substr($Uptime, 13);  //Cut time from string if it exists
+  
   $fi = new FilesystemIterator($DirOldLogs, FilesystemIterator::SKIP_DOTS);
   
   
   DrawSysTable('Server');
   DrawSysRow('Name', gethostname());
-  DrawSysRow('IP Address', $_SERVER['SERVER_ADDR']);
+  DrawSysRow('Network Device', $Config['NetDev']);
+  if (($Config['IPVersion'] == 'IPv4') || ($Config['IPVersion'] == 'IPv6')) {
+    DrawSysRow('Internet Protocol', $Config['IPVersion']);
+    DrawSysRow('IP Address', $_SERVER['SERVER_ADDR']);
+  }
+  else {
+    DrawSysRow('IP Address', $Config['IPVersion']);
+  }
+  
   DrawSysRow('Sysload', $Load[0].' | '.$Load[1].' | '.$Load[2]);
   DrawSysRow('Memory Used', $FreeMem[2].' MB');
   DrawSysRow('Free Memory', $FreeMem[3].' MB');
-  DrawSysRow('Uptime', exec('uptime -p | cut -d \  -f 2-'));
-  DrawSysRow('NoTrack Version', $Version);
+  DrawSysRow('Uptime', $Uptime);
+  DrawSysRow('NoTrack Version', $Version); 
   echo '</table></div></div>'.PHP_EOL;
   
   DrawSysTable('Dnsmasq');
@@ -348,7 +455,9 @@ function DisplayConfigChoices() {
   DrawSysRow('Delete All History', '<button class="button-danger" onclick="ConfirmLogDelete();">Purge</button>');
   echo '</table></div></div>'.PHP_EOL;
 
-  echo '<form name="blockmsg" action="?" method="post">';        //Web Server
+  
+  //Web Server
+  echo '<form name="blockmsg" action="?" method="post">';
   echo '<input type="hidden" name="action" value="webserver">';
   DrawSysTable('Lighttpd');
   if ($PS_Lighttpd[0] != null) DrawSysRow('Status','Lighttpd is running');
@@ -361,9 +470,11 @@ function DisplayConfigChoices() {
   else DrawSysRow('Block Message', '<input type="radio" name="block" value="pixel" onclick="document.blockmsg.submit()">1x1 Blank Pixel (default)<br /><input type="radio" name="block" value="messge" checked onclick="document.blockmsg.submit()">Message - Blocked by NoTrack<br />');  
   echo '</table></div></div></form>'.PHP_EOL;
 
+  
   //Stats
   echo '<form name="stats" action="?" method="post">';
   echo '<input type="hidden" name="action" value="stats">';
+  
   DrawSysTable('Domain Stats');
   echo '<tr><td>Search Engine: </td>'.PHP_EOL;
   echo '<td><select name="search" onchange="submit()">'.PHP_EOL;
@@ -374,7 +485,19 @@ function DisplayConfigChoices() {
     }
   }
   echo '</select></td></tr>'.PHP_EOL;
-  echo '</table></div></div></form>'.PHP_EOL;
+  
+  echo '<tr><td>Who Is Lookup: </td>'.PHP_EOL;
+  echo '<td><select name="whois" onchange="submit()">'.PHP_EOL;
+  echo '<option value="'.$Config['WhoIs'].'">'.$Config['WhoIs'].'</option>'.PHP_EOL;
+  foreach ($WhoIsList as $Site) {
+    if ($Site != $Config['WhoIs']) {
+      echo '<option value="'.$Site.'">'.$Site.'</option>'.PHP_EOL;
+    }
+  }
+  echo '</select></td></tr>'.PHP_EOL;
+  
+  echo '</table></div></div></form>'.PHP_EOL;    //End Stats
+  
   
   //Security
   echo '<form name="security" action="?" method="post">';
@@ -393,14 +516,17 @@ function DisplayConfigChoices() {
 function DisplayCustomList($View) {
   global $List, $SearchStr;
   
-  //Needs Pagination
-  
-  echo '<div class="sys-group"><div class="centered">'.PHP_EOL;
+  echo '<div class="sys-group"><div class="sys-title">'.PHP_EOL;
+  echo '<h5>'.ucfirst($View).' List</h5>'.PHP_EOL;
+  echo '</div>'.PHP_EOL;
+  echo '<div class="sys-items">'.PHP_EOL;
+  echo '<div class="centered">'.PHP_EOL;
   echo '<form action="?" method="get">';
   echo '<input type="hidden" name="v" value="'.$View.'">';
-  if ($SearchStr == '') echo '<input type="text" name="s" id="search" placeholder="Search">';
-  else echo '<input type="text" name="s" id="search" value="'.$SearchStr.'">';
-  echo '</form></div></div>'.PHP_EOL;
+  if ($SearchStr == '') echo '<input type="text" name="s" id="search" placeholder="Search">'.PHP_EOL;
+  else echo '<input type="text" name="s" id="search" value="'.$SearchStr.'">'.PHP_EOL;
+  echo '</form>'.PHP_EOL;
+  echo '</div></div></div>'.PHP_EOL;
   
   echo '<div class="sys-group">';
   echo '<div class="row"><br />'.PHP_EOL;
@@ -431,13 +557,9 @@ function DisplayCustomList($View) {
       $i++;
     }
   }
-  if (($View == 'black') || ($View == 'white')) {
-    echo '<tr><td>'.$i.'</td><td><input type="text" name="site'.$i.'" placeholder="site.com"></td><td><input type="text" name="comment'.$i.'" placeholder="comment"></td><td><button class="button-small" onclick="AddSite('.$i.')"><span><img src="./images/green_tick.png" class="btn" alt=""></span>Save</button></td></tr>';
-  }
-  elseif (($View == 'tldblack') || ($View == 'tldwhite')) {
-    echo '<tr><td>'.$i.'</td><td><input type="text" name="site'.$i.'" placeholder=".domain"></td><td><input type="text" name="comment'.$i.'" placeholder="comment"></td><td><button class="button-small" onclick="AddSite('.$i.')"><span><img src="./images/green_tick.png" class="btn" alt=""></span>Save</button></td></tr>';
-  }
-    
+  
+  echo '<tr><td>'.$i.'</td><td><input type="text" name="site'.$i.'" placeholder="site.com"></td><td><input type="text" name="comment'.$i.'" placeholder="comment"></td><td><button class="button-small" onclick="AddSite('.$i.')"><span><img src="./images/green_tick.png" class="btn" alt=""></span>Save</button></td></tr>';
+        
   echo '</table></div></div>'.PHP_EOL;
   
   echo '<div class="sys-group"><div class="centered">'.PHP_EOL;  
@@ -480,6 +602,7 @@ function DisplaySiteList() {
   }
   
   echo '<div class="sys-group">';
+  echo '<h5>Sites Blocked</h5>'.PHP_EOL;
   echo '<div class="centered">'.PHP_EOL;
   echo '<form action="?" method="get">';
   echo '<input type="hidden" name="v" value="sites">';
@@ -510,15 +633,15 @@ function DisplaySiteList() {
 
   foreach ($List as $Site) {    
     if ($Site[1] == 'Active') {
-      echo '<tr><td>'.$i.'</td><td>'.$Site[0].'</td><td>'.$Site[2].'<td><input type="checkbox" name="'.$Site[0].'" checked="checked"></td></tr>'.PHP_EOL;
+      echo '<tr><td>'.$i.'</td><td>'.$Site[0].'</td><td>'.$Site[2].'<td></td></tr>'.PHP_EOL;
     }
     else {
-      echo '<tr class="dark"><td>'.$i.'</td><td>'.$Site[0].'</td><td>'.$Site[2].'<td><input type="checkbox" name="'.$Site[0].'"></td></tr>'.PHP_EOL;
+      echo '<tr class="dark"><td>'.$i.'</td><td><s>'.$Site[0].'</s></td><td><s>'.$Site[2].'</s><td></td></tr>'.PHP_EOL;
     }
     $i++;
   }
   
-  echo '</table></div></div>'.PHP_EOL;
+  echo '</table></div>'.PHP_EOL;
   
   if ($ListSize > $RowsPerPage) {               //Is Pagination needed
     echo '<div class="sys-group">';
@@ -596,34 +719,195 @@ function DisplayPagination($LS, $View) {
   }	
   echo '</ul></div>'.PHP_EOL;
 }
+//-------------------------------------------------------------------
+function DisplayDomainList() {
+  global $List, $FileTLDBlackList, $FileTLDWhiteList;
+  
+  //1. Load Users Domain Black list and convert into associative array
+  //2. Load Users Domain White list and convert into associative array
+  //3. Display list
+  
+  $KeyBlack = array_flip(Load_List($FileTLDBlackList, 'TLDBlackList'));
+  $KeyWhite = array_flip(Load_List($FileTLDWhiteList, 'TLDWhiteList'));
+  $ListSize = count($List);
+  
+  if ($List[$ListSize-1][0] == '') {             //Last line is sometimes blank
+    array_splice($List, $ListSize-1);            //Cut last line out
+  }
+  
+  $FlagImage = '';  
+  $UnderscoreName = '';
+
+  echo '<div class="sys-group"><div class="sys-title">'.PHP_EOL;
+  echo '<h5>Domain Blocking</h5>'.PHP_EOL;
+  echo '</div>'.PHP_EOL;
+  echo '<div class="sys-items">'.PHP_EOL;
+  echo '<span class="key key-red">High</span>'.PHP_EOL;
+  echo '<p>High risk domains are home to a high percentage of Malicious sites compared to legitimate sites. Often they are cheap / free to buy and not well policed.<br />'.PHP_EOL;
+  echo 'High risk domains are automatically blocked, unless you specifically untick them.</p>'.PHP_EOL;
+  echo '<br />'.PHP_EOL;
+  
+  echo '<span class="key key-orange">Medium</span>'.PHP_EOL;
+  echo '<p>Medium risk domains are home to a significant number of malicious sites, but are outnumbered by legitimate sites. You may want to consider blocking these, unless you live in, or utilise the websites of the affected country.</p>'.PHP_EOL;
+  echo '<p>e.g. .pl (Poland) domain used to house a large number of Exploit kits which sat short lived randomly named sites. Traditional blocking is impossible, therefore it can be safer to block the entire .pl domain.</p>'.PHP_EOL;
+  echo '<br />'.PHP_EOL;
+  
+  echo '<span class="key">Low</span>'.PHP_EOL;
+  echo '<p>Low risk may still house some malicious sites, but they are vastly outnumbered by legitimate sites.</p>'.PHP_EOL;
+  echo '<br />'.PHP_EOL;
+  
+  echo '<span class="key key-green">Negligible</span>'.PHP_EOL;
+  echo '<p>These domains are not open to the public, therefore extremely unlikely to contain malicious sites.</p>'.PHP_EOL;
+  echo '<br />'.PHP_EOL;
+  
+  echo '<p><b>Shady Domains</b><br />'.PHP_EOL;
+  echo 'Stats of &quot;Shady&quot; Domains have been taken from <a href="https://www.bluecoat.com/security/security-blog">BlueCoat Security Blog</a>. The definition of Shady includes Malicious, Spam, Suspect, and Adult sites.</p>';  
+  
+  echo '</div></div>'.PHP_EOL;
+  
+  
+  //Tables
+  echo '<div class="sys-group">'.PHP_EOL;
+  if ($ListSize == 0) {                          //Is List blank?
+    echo 'No sites found in Block List'.PHP_EOL; //Yes, display error, then leave
+    echo '</div>';
+    return;
+  }
+  
+  echo '<form name="tld" action="?" method="post">'.PHP_EOL;
+  echo '<input type="hidden" name="action" value="tld">'.PHP_EOL;
+    
+  echo '<p><b>Old Generic Domains</b></p>'.PHP_EOL;
+  echo '<table class="tld-table">'.PHP_EOL;
+  
+  foreach ($List as $Site) {
+    if ($Site[2] == 0) {                         //Zero means draw new table
+      echo '</table>'.PHP_EOL;                   //End old table
+      echo '<br />'.PHP_EOL;
+      echo '<p><b>'.$Site[1].'</b></p>'.PHP_EOL; //Title of Table
+      echo '<table class="tld-table">'.PHP_EOL;  //New Table
+      continue;                                  //Jump to end of loop
+    }
+    
+    switch ($Site[2]) {                          //Row colour based on risk
+      case 1: echo '<tr class="invalid">'; break;
+      case 2: echo '<tr class="orange">'; break;      
+      case 3: echo '<tr>'; break;                //Use default colour for low risk
+      case 5: echo '<tr class="green">'; break;
+    }
+    
+    $UnderscoreName = str_replace(' ', '_', $Site[1]); //Flag names are seperated by underscore
+    
+    //Does a Flag image exist?
+    if (file_exists('./images/flags/Flag_of_'.$UnderscoreName.'.png')) $FlagImage = '<img src="./images/flags/Flag_of_'.$UnderscoreName.'.png" alt=""> ';
+    else $FlagImage = '';
+    
+    //(Risk 1 & NOT in White List) OR (in Black List)
+    if ((($Site[2] == 1) && (! array_key_exists($Site[0], $KeyWhite))) || (array_key_exists($Site[0], $KeyBlack))) {
+      echo '<td><b>'.$Site[0].'</b></td><td><b>'.$FlagImage.$Site[1].'</b></td><td>'.$Site[3].'</td><td><input type="checkbox" name="'.substr($Site[0], 1).'" checked="checked"></td></tr>'.PHP_EOL;
+    }
+    else {
+      echo '<td>'.$Site[0].'</td><td>'.$FlagImage.$Site[1].'</td><td>'.$Site[3].'</td><td><input type="checkbox" name="'.substr($Site[0], 1).'"></td></tr>'.PHP_EOL;
+    }    
+  }
+  
+  echo '</table>'.PHP_EOL;
+  echo '<div class="centered"><br />'.PHP_EOL;
+  echo '<input type="submit" value="Save Changes">'.PHP_EOL;
+  echo '</div>'.PHP_EOL;
+  echo '</form></div>'.PHP_EOL;          //End table
+  
+  return null;
+}
+//-------------------------------------------------------------------
+function DisplayStatus() {
+  echo '<pre>'.PHP_EOL;
+  system('/usr/local/sbin/notrack --test');
+  echo '</pre>'.PHP_EOL;
+}
+//-------------------------------------------------------------------
+function UpdateAdvancedConfig() {
+  //1. Make sure Suppress list is valid
+  // 1a. Replace new line and space with commas
+  // 1b. If string too short, set to '' then leave
+  // 1c. Copy Valid URL's to a ValidList array
+  // 1d. Write valid URL's to Config Suppress string seperated by commas 
+  global $Config;
+  
+  $SuppressStr = '';
+  $SuppressList = array();
+  $ValidList = array();
+  if (isset($_POST['suppress'])) {
+    $SuppressStr = preg_replace('#\s+#',',',trim($_POST['suppress'])); //Split array
+    if (strlen($SuppressStr) <= 2) {             //Is string too short?
+      $Config['Suppress'] = '';
+      return true;
+    }
+    
+    $SuppressList = explode(',', $SuppressStr);  //Split string into array
+    foreach ($SuppressList as $Site) {           //Check if each item is a valid URL
+      if (Filter_URL_Str($Site)) {
+        $ValidList[] = $Site;
+      }
+    }
+    if (sizeof($ValidList) == 0) $Config['Suppress'] = '';
+    else $Config['Suppress'] = implode(',', $ValidList);
+  }
+  
+  return true;
+}
 //Update Block List Config-------------------------------------------
 function UpdateBlockListConfig() {
   //Read and Filter values parsed from HTTP POST into the Config array  
   //After this function WriteTmpConfig is run
   
-  global $Config, $FileTmpConfig, $Mem;
+  global $Config;
+  $CustromStr = '';
+  $CustromList = array();
+  $ValidList = array();
     
-  $Config['BlockList_NoTrack'] = Filter_Config('bl_notrack');
-  $Config['BlockList_TLD'] = Filter_Config('bl_tld');
-  $Config['BlockList_QMalware'] = Filter_Config('bl_qmalware');
-  $Config['BlockList_AdBlockManager'] = Filter_Config('bl_adblockmanager');
-  $Config['BlockList_DisconnectMalvertising'] = Filter_Config('bl_dismalvertising');
-  $Config['BlockList_EasyList'] = Filter_Config('bl_easylist');
-  $Config['BlockList_EasyPrivacy'] = Filter_Config('bl_easyprivacy');
-  $Config['BlockList_FBAnnoyance'] = Filter_Config('bl_fbannoyance');
-  $Config['BlockList_FBEnhanced'] = Filter_Config('bl_fbenhanced');
-  $Config['BlockList_FBSocial'] = Filter_Config('bl_fbsocial');
-  $Config['BlockList_hpHosts'] = Filter_Config('bl_hphosts');
-  $Config['BlockList_MalwareDomainList'] = Filter_Config('bl_maldomainlist');
-  $Config['BlockList_MalwareDomains'] = Filter_Config('bl_malwaredomains');  
-  $Config['BlockList_PglYoyo'] = Filter_Config('bl_pglyoyo');
-  $Config['BlockList_SomeoneWhoCares'] = Filter_Config('bl_someonewhocares');
-  $Config['BlockList_Spam404'] = Filter_Config('bl_spam404');
-  $Config['BlockList_Winhelp2002'] = Filter_Config('bl_winhelp2002');
-  $Config['BlockList_CHNEasy'] = Filter_Config('bl_chneasy');
-  $Config['BlockList_RUSEasy'] = Filter_Config('bl_ruseasy');
+  $Config['bl_notrack'] = Filter_Config('bl_notrack');
+  $Config['bl_tld'] = Filter_Config('bl_tld');
+  $Config['bl_qmalware'] = Filter_Config('bl_qmalware');
+  $Config['bl_hexxium'] = Filter_Config('bl_hexxium');  
+  $Config['bl_disconnectmalvertising'] = Filter_Config('bl_disconnectmalvertising');
+  $Config['bl_easylist'] = Filter_Config('bl_easylist');
+  $Config['bl_easyprivacy'] = Filter_Config('bl_easyprivacy');
+  $Config['bl_fbannoyance'] = Filter_Config('bl_fbannoyance');
+  $Config['bl_fbenhanced'] = Filter_Config('bl_fbenhanced');
+  $Config['bl_fbsocial'] = Filter_Config('bl_fbsocial');
+  $Config['bl_hphosts'] = Filter_Config('bl_hphosts');
+  $Config['bl_malwaredomainlist'] = Filter_Config('bl_malwaredomainlist');
+  $Config['bl_malwaredomains'] = Filter_Config('bl_malwaredomains');  
+  $Config['bl_pglyoyo'] = Filter_Config('bl_pglyoyo');
+  $Config['bl_someonewhocares'] = Filter_Config('bl_someonewhocares');
+  //$Config['bl_securemecca'] = Filter_Config('bl_securemecca');
+  $Config['bl_spam404'] = Filter_Config('bl_spam404');
+  $Config['bl_swissransom'] = Filter_Config('bl_swissransom');
+  $Config['bl_swisszeus'] = Filter_Config('bl_swisszeus');
+  $Config['bl_winhelp2002'] = Filter_Config('bl_winhelp2002');
+  $Config['bl_areasy'] = Filter_Config('bl_areasy');
+  $Config['bl_chneasy'] = Filter_Config('bl_chneasy');
+  $Config['bl_deueasy'] = Filter_Config('bl_deueasy');
+  $Config['bl_dnkeasy'] = Filter_Config('bl_dnkeasy');
+  $Config['bl_ruseasy'] = Filter_Config('bl_ruseasy');
+  $Config['bl_fblatin'] = Filter_Config('bl_fblatin');
   
-  //print_r($Config); 
+  if (isset($_POST['bl_custom'])) {    
+    $CustomStr = preg_replace('#\s+#',',',trim($_POST['bl_custom'])); //Split array
+    $CustomList = explode(',', $CustomStr);      //Split string into array
+    foreach ($CustomList as $Site) {             //Check if each item is a valid URL
+      if (Filter_URL_Str($Site)) {
+        $ValidList[] = $Site;
+      }
+    }
+    if (sizeof($ValidList) == 0) $Config['bl_custom'] = '';
+    else $Config['bl_custom'] = implode(',', $ValidList);
+  }
+  else {
+    $Config['bl_custom'] = "";
+  }
+    
   return null;
 }
 //Update Custom List-------------------------------------------------
@@ -711,16 +995,55 @@ function UpdateCustomList($LongName, $ListName) {
 }
 //Update Stats Config------------------------------------------------
 function UpdateStatsConfig() {
-  global $Config, $SearchEngineList;
+  global $Config, $SearchEngineList, $WhoIsList;
+  
+  $Updated = false;
   
   if (isset($_POST['search'])) {
     if (in_array($_POST['search'], $SearchEngineList)) {
       $Config['Search'] = $_POST['search'];
       $Config['SearchUrl'] = '';
-      return true;
+      $Updated = true;
     }
   }
-  return false;
+  
+  if (isset($_POST['whois'])) {    
+    if (in_array($_POST['whois'], $WhoIsList)) {
+      $Config['WhoIs'] = $_POST['whois'];
+      $Config['WhoIsUrl'] = '';
+      $Updated = true;
+    }
+  }
+  return $Updated;
+}
+//-------------------------------------------------------------------
+function UpdateDomainList() {
+  global $DirTmp, $List;
+  
+  //Start with White List
+  $FileHandle = fopen($DirTmp.'domain-whitelist.txt', 'w') or die('Unable to open '.$DirTmp.'domain-whitelist.txt');
+  
+  fwrite($FileHandle, '#Domain White list generated by config.php'.PHP_EOL);
+  
+  foreach ($List as $Site) {                     //Generate White list based on unticked Risk 1 items
+    if ($Site[2] == 1) {
+      if (! isset($_POST[substr($Site[0], 1)])) { //Check POST for domain minus preceding .
+        fwrite($FileHandle, $Site[0].PHP_EOL);   //Add domain to White list
+      }
+    }
+  }
+  fclose($FileHandle);                           //Close White List
+  
+  //Write Black List
+  $FileHandle = fopen($DirTmp.'domain-blacklist.txt', 'w') or die('Unable to open '.$DirTmp.'domain-blacklist.txt');
+    
+  fwrite($FileHandle, '#Domain Block list generated by config.php'.PHP_EOL);
+  fwrite($FileHandle, '#Do not make any changes to this file'.PHP_EOL);
+  
+  foreach ($_POST as $Key => $Value) {           //Generate Black list based on ticked items in $_POST
+    if ($Value == 'on') fwrite($FileHandle, '.'.$Key.PHP_EOL); //Add each item of POST of value is "on"
+  }
+  fclose($FileHandle);                           //Close Black List
 }
 //Update Security Config---------------------------------------------
 function UpdateSecurityConfig() {
@@ -767,7 +1090,6 @@ function UpdateWebserverConfig() {
     }
   }
 }
-
 //Write Tmp Config File----------------------------------------------
 function WriteTmpConfig() {
   //1. Check if Latest Version is less than Current Version
@@ -778,7 +1100,7 @@ function WriteTmpConfig() {
   //6. Delete Config Array out of Memcache, in order to force reload
   //7. Onward process is to Display appropriate config view
   
-  global $Config, $FileTmpConfig, $Mem, $Version;
+  global $Config, $FileTmpConfig, $Mem, $Version;  
   
   //Prevent wrong version being written to config file if user has just upgraded and old LatestVersion is still stored in Memcache
   if (Check_Version($Config['LatestVersion'])) $Config['LatestVersion'] = $Version;
@@ -797,7 +1119,7 @@ function WriteTmpConfig() {
   }
   fclose($FileHandle);                           //Close file
   
-  $Mem->delete('Config');                        //Delete config from Memcache  
+  $Mem->delete('Config');                        //Delete config from Memcache
 }
 //Main---------------------------------------------------------------
 
@@ -855,17 +1177,19 @@ if (isset($_GET['v'])) {
       LoadCustomList('white', $FileWhiteList);
       DisplayCustomList('white');
       break;
-    case 'tldblack':
-      LoadCustomList('tldblack', $FileTLDBlackList);
-      DisplayCustomList('tldblack');
-      break;
-    case 'tldwhite':
-      LoadCustomList('tldwhite', $FileTLDWhiteList);
-      DisplayCustomList('tldwhite');
+    case 'tld':
+      Load_CSV($CSVTld, 'CSVTld');
+      DisplayDomainList();     
       break;
     case 'sites':
-      LoadSiteList();
+      Load_CSV($CSVBlocking, 'SitesBlocked');
       DisplaySiteList();
+      break;
+    case 'advanced':
+      DisplayAdvanced();
+      break;
+    case 'status':
+      DisplayStatus();
       break;
     default:
       DisplayConfigChoices();

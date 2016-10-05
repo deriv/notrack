@@ -1,7 +1,7 @@
 <?php
 require('./include/global-vars.php');
 require('./include/global-functions.php');
-require('./include/topmenu.php');
+require('./include/menu.php');
 
 LoadConfigFile();
 if ($Config['Password'] != '') {  
@@ -23,20 +23,23 @@ if ($Config['Password'] != '') {
 </head>
 
 <body>
-<div id="main">
 <?php
 ActionTopMenu();
-DrawTopMenu();
+draw_topmenu();
+draw_sidemenu();
+echo '<div id="main">'.PHP_EOL;
 
-echo '<h1>DHCP Leases</h1>'.PHP_EOL;
-echo '<div class="sys-group">'.PHP_EOL;
+echo '<div class="sys-group"><div class="sys-title">'.PHP_EOL;
+echo '<h5>DHCP Leases</h5>'.PHP_EOL;
+echo '</div>'.PHP_EOL;
+echo '<div class="sys-items">'.PHP_EOL;
 
 //Is DHCP Active?
 if (file_exists('/var/lib/misc/dnsmasq.leases')) {
   $FileHandle= fopen('/var/lib/misc/dnsmasq.leases', 'r') or die('Error unable to open /var/lib/misc/dnsmasq.leases');
 
   echo '<table id="dhcp-table">'.PHP_EOL;
-  echo '<tr><th>Date of Request</th><th>Device Name</th><th>MAC Address</th><th>IP Allocated</th>'.PHP_EOL;
+  echo '<tr><th>IP Allocated</th><th>Device Name</th><th>MAC Address</th><th>Valid Until</th>'.PHP_EOL;
   
   while (!feof($FileHandle)) {
     $Line = trim(fgets($FileHandle));            //Read Line of LogFile
@@ -47,7 +50,7 @@ if (file_exists('/var/lib/misc/dnsmasq.leases')) {
       //2 - IP Allocated
       //3 - Device Name
       //4 - '*' or MAC address
-      echo '<tr><td>'.date("d M Y \- H:i:s", $Seg[0]).'</td><td>'.$Seg[3].'</td><td>'.$Seg[1].'</td><td>'.$Seg[2].'</td></tr>'.PHP_EOL;
+      echo '<tr><td>'.$Seg[2].'</td><td>'.$Seg[3].'</td><td>'.$Seg[1].'</td><td>'.date("d M Y \- H:i:s", $Seg[0]).'</td></tr>'.PHP_EOL;
     }    
   }
   echo '</table>'.PHP_EOL;
@@ -60,7 +63,7 @@ else {
   echo '<iframe width="640" height="360" src="https://www.youtube.com/embed/a5dUJ0SlGP0" frameborder="0" allowfullscreen></iframe>'.PHP_EOL;  
 }
 ?>
-</div>
+</div></div>
 </div>
 </body>
 </html>

@@ -1,7 +1,7 @@
 <?php
 require('./include/global-vars.php');
 require('./include/global-functions.php');
-require('./include/topmenu.php');
+require('./include/menu.php');
 
 LoadConfigFile();
 if ($Config['Password'] != '') {  
@@ -24,9 +24,8 @@ if ($Config['Password'] != '') {
 </head>
 
 <body>
-<div id="main">
 <?php
-
+//-------------------------------------------------------------------
 function LoadHelpPage($Page) {  
   if (file_exists('./help/'.$Page.'.html')) {
     echo file_get_contents('./help/'.$Page.'.html');
@@ -35,13 +34,17 @@ function LoadHelpPage($Page) {
     echo 'Error: File not found'.PHP_EOL;
   }
 }
-
+//-------------------------------------------------------------------
 ActionTopMenu();
-DrawTopMenu();
-echo '<h1>NoTrack Help</h1>'.PHP_EOL;
+draw_topmenu();
+draw_helpmenu();
+echo '<div id="main">'.PHP_EOL;
 
 if (isset($_GET['p'])) {
   switch($_GET['p']) {
+    case 'position':
+      LoadHelpPage('position');
+      break;
     case 'newblocklist':
       LoadHelpPage('newblocklist');
       break;

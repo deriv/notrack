@@ -1,7 +1,7 @@
 <?php
 require('./include/global-vars.php');
 require('./include/global-functions.php');
-require('./include/topmenu.php');
+require('./include/menu.php');
 
 LoadConfigFile();
 if ($Config['Password'] != '') {  
@@ -17,16 +17,19 @@ if ($Config['Password'] != '') {
 <head>
   <meta charset="UTF-8" />
   <link href="./css/master.css" rel="stylesheet" type="text/css" />
+  <link href="./css/help.css" rel="stylesheet" type="text/css" />
   <link rel="icon" type="image/png" href="./favicon.png" />
   <script src="./include/menu.js"></script>
-  <title>NoTrack - Sites Blocked</title>
+  <script src="./include/stats.js"></script>
+  <title>NoTrack - Sites Blocked</title>  
 </head>
 
 <body>
-<div id="main">
 <?php
 ActionTopMenu();
-DrawTopMenu();
+draw_topmenu();
+draw_sidemenu();
+echo '<div id="main">';
 
 $SiteList = array();
 
@@ -129,24 +132,62 @@ function DisplayPagination($LS) {
   echo '</ul></div>'.PHP_EOL;
 }
 //-------------------------------------------------------------------
-
 function Load_Access_Log() {
   global $SiteList, $LogLightyAccess;
-  $SplitLine = array();
+  $Dedup = '';
+  $Action='';
+  $URL='';
+  $i=0;
+  $TempList = array();
+  
+  //Example Log Data
+  //1471892585|polling.bbc.co.uk|GET /appconfig/iplayer/android/4.19.3/policy.json HTTP/1.1|200|26
+  //1471892807|cmdts.ksmobile.com|POST /c/ HTTP/1.1|200|26
+  //1471771627|notrack.local|GET /admin/svg/menu_dhcp.svg HTTP/1.1|304|0
+  //1471773009|notrack.local|GET /admin/stats.php HTTP/1.1|200|117684
+  
+  //Regex Matches:
+  //1: \d{1,23} - 64bit Time value
+  //2: [A-Za-z0-9\-\.] One or more times Left-hand side of URL (before /)
+  //3: (GET|POST) GET or POST
+  //Negate /admin and /favicon.ico
+  //4: [Non whitespace] Any number of times Right-hand side of URL (after /)
+  //HTTP 1.1 or 2.0
+  //200 - HTTP Ok (Not interested in 304,404)
   
   if (file_exists($LogLightyAccess)) {
     $FileHandle= fopen($LogLightyAccess, 'r');
     while (!feof($FileHandle)) {
       $Line = trim(fgets($FileHandle));          //Read Line of LogFile
-      if ($Line != '') {
-        $SplitLine = explode('|', $Line);
-        if ((substr($SplitLine[2], 0, 10) != 'GET /admin') &&
-          (substr($SplitLine[2], 0, 12) != 'GET /favicon')) {
-          if (substr($SplitLine[1], 0, 4) == 'www.') $SplitLine[1] = substr($SplitLine[1], 4);
-          $SiteList[] = array($SplitLine[0], $SplitLine[1]);
+      //echo $Line.'<br />';
+      if (preg_match('/^(\d{1,23})\|([A-Za-z0-9\-\_\.]+)\|(GET|POST)\s(?!\/admin|\/favicon\.ico)(\S*)\sHTTP\/\d\.\d\|200/', $Line, $Matches) > 0) {
+        if ($Matches[3] == 'GET') $Action='<span class="green">GET</span> ';
+        else $Action='<span class="violet">POST</span> ';
+        $URL = $Matches[2].$Matches[4];
+        
+        //If string length too long, then attempt to cut out segment of known file name of URI and join to shortened URL
+        //For unknown file just show the first 45 characters and display+ button
+        if (strlen($URL) > 48) {
+          if (preg_match('/[A-Za-z0-9\-_\%\&\?\.#]{1,18}\.(php|html|js|json|jpg|gif|png)$/', $Matches[4], $URIMatches) > 0) {
+            $URL = substr($URL, 0, (45 - strlen($URIMatches[0]))).'.../'.$URIMatches[0].' <span id="b'.$i.'" class="button-small pointer" onclick="ShowFull(\''.$i.'\')">+</span>'.'<p id="r'.$i.'" class="smallhidden">'.$Matches[2].$Matches[4].'</p>';
+          }
+          else {
+            $URL = substr($URL, 0, 45).'... <span id="b'.$i.'" class="button-small pointer" onclick="ShowFull(\''.$i.'\')">+</span>'.'<p id="r'.$i.'" class="smallhidden">'.$Matches[2].$Matches[4].'</p>';
+          }
+        }      
+        if ($Matches[2] == $Dedup) {
+          $TempList[count($TempList)-1] = array($Matches[1], $Action.$URL);
         }
+        else {
+          $TempList[] = array($Matches[1], $Action.$URL);
+          $Dedup = $Matches[2];
+        }      
       }
+      $i++;
     }
+    fclose($FileHandle);
+    
+    $SiteList = array_reverse($TempList);
   }
   else {                                         //Log not found
     return false;
@@ -180,7 +221,7 @@ echo '<tr><th>#</th><th>Time</th><th>Site</th></tr>'.PHP_EOL;
 //Draw Table Cells---------------------------------------------------
 $i = $StartPoint;
 foreach ($SiteList as $Site) {
-  echo '<tr><td>'.$i.'</td><td>'.date('d M - H:i:s',$Site[0]).'</td><td>'.$Site[1].'</td></tr>';
+  echo '<tr><td>'.$i.'</td><td>'.date('d M - H:i:s',$Site[0]).'</td><td>'.$Site[1].'</td></tr>'.PHP_EOL;
   $i++;  
 }
 
@@ -194,5 +235,7 @@ if ($ListSize > $RowsPerPage) {
 
 ?>
 </div>
+<div id="scrollup" class="button-scroll" onclick="ScrollToTop()"><img src="./svg/arrow-up.svg" alt="up"></a></div>
+<div id="scrolldown" class="button-scroll" onclick="ScrollToBottom()"><img src="./svg/arrow-down.svg" alt="down"></a></div>
 </body>
 </html>
